@@ -34,14 +34,12 @@ jobs:
       - name: Prepare config and workspace
         run: |
           set -e
-          mkdir -p db /etc/clamav
-          # Minimal, compatible freshclam config
-          cat >/etc/clamav/freshclam.conf <<'EOF'
-          # Mirrors
+          mkdir -p db
+          sudo mkdir -p /etc/clamav
+          # write freshclam.conf with sudo (writing under /etc needs sudo)
+          sudo tee /etc/clamav/freshclam.conf > /dev/null <<'EOF'
           DatabaseMirror database.clamav.net
-          # Avoid trying to notify a local daemon on the runner
           NotifyClamd no
-          # Recommended toggles
           CompressLocalDatabase yes
           DatabaseOwner root
           DNSDatabaseInfo current.cvd.clamav.net
