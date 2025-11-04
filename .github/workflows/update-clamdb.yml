@@ -1,18 +1,17 @@
 name: Update ClamAV Database
 
 on:
-  # manual run button
   workflow_dispatch:
-  # auto: every 6 hours at :17
   schedule:
     - cron: "17 */6 * * *"
 
 permissions:
-  contents: write  # needed for commit & release
+  contents: write
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -21,55 +20,47 @@ jobs:
       - name: Install ClamAV tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clamav clamav-freshclam
+          sudo apt-get install -y clamav clamav-freshclam ca-certificates
 
       - name: Prepare config and workspace
         run: |
           mkdir -p build/clamdb
+          echo "DatabaseMirror database.clamav.net" > freshclam.conf
+          echo "DatabaseMirror clamav-data.cdn.cloudflare.net" >> freshclam.conf
+          echo "CompressLocalDatabase yes" >> freshclam.conf
+          echo "DatabaseOwner clamav" >> freshclam.conf
+          echo "ScriptedUpdates yes" >> freshclam.conf
+          echo "NotifyClamd no" >> freshclam.conf
+          echo "ConnectTimeout 30" >> freshclam.conf
+          echo "ReceiveTimeout 60" >> freshclam.conf
+          echo "DNSDatabaseInfo current.cvd.clamav.net" >> freshclam.conf
+          echo "DatabaseDirectory ./build/clamdb" >> freshclam.conf
+          echo "AllowSupplementaryGroups yes" >> freshclam.conf
 
-      - name: Fetch latest ClamAV databases (Cloudflare first, safe fallbacks)
+      - name: Fetch latest ClamAV databases (via freshclam)
         shell: bash
         run: |
-          set -euo pipefail
-          UA="curl/7 GitHubActions ClamAV-DB-Updater"
-          OUT="build/clamdb"
-
-          fetch_one () {
-            local base="$1"
-            local dest="$OUT/$base.cvd"
-            # Try Cloudflare mirror first, then the classic host; try .cvd then .cld
-            local urls=(
-              "https://clamav-data.cdn.cloudflare.net/$base.cvd"
-              "https://clamav-data.cdn.cloudflare.net/$base.cld"
-              "https://database.clamav.net/$base.cvd"
-              "https://database.clamav.net/$base.cld"
-            )
-
-            for u in "${urls[@]}"; do
-              echo "Trying $u"
-              if curl -fsSL \
-                   --retry 5 --retry-all-errors \
-                   --connect-timeout 10 --max-time 180 \
-                   -A "$UA" -o "$dest.tmp" "$u"; then
-                mv -f "$dest.tmp" "$dest"
-                echo "OK: downloaded $base from $u"
-                return 0
+          set -e
+          echo "Running freshclam (IPv4 only, quiet mode)..."
+          sudo freshclam --config-file=freshclam.conf --no-warnings -d -p ./build/clamdb/pidfile || true
+          echo "Retrying manually via curl fallback..."
+          for file in main daily bytecode; do
+            for ext in cvd cld; do
+              url="https://database.clamav.net/${file}.${ext}"
+              dest="./build/clamdb/${file}.${ext}"
+              echo "Trying $url..."
+              if curl -fsSL --retry 5 --connect-timeout 10 -A "ClamAV-GitHubRunner" -o "$dest" "$url"; then
+                echo "✅ Downloaded $file.$ext"
+                break
               fi
             done
+          done
 
-            echo "ERROR: failed to download $base from all mirrors" >&2
-            return 1
-          }
-
-          fetch_one main
-          fetch_one daily
-          fetch_one bytecode
-
-      - name: Quick validation (informational)
-        continue-on-error: true
+      - name: Verify database files
         run: |
+          echo "Verifying downloaded databases..."
           for f in build/clamdb/*.cvd; do
-            echo "::group::sigtool --verify-cvd $(basename "$f")"
+            echo "::group::Verifying $(basename "$f")"
             sigtool --verify-cvd "$f" || true
             echo "::endgroup::"
           done
@@ -78,11 +69,10 @@ jobs:
         run: |
           DEST="assets/clamav"
           mkdir -p "$DEST"
-          cp -f build/clamdb/*.cvd "$DEST"/
-
+          cp -f build/clamdb/*.cvd "$DEST"/ || true
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git status --porcelain "$DEST" | grep .; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add "$DEST"
             git commit -m "Update ClamAV DB ($(date -u +%Y-%m-%dT%H:%MZ))"
             git push
@@ -100,9 +90,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Latest ClamAV DB
+          name: Latest ClamAV Database
           files: build/clamdb/*.cvd
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
