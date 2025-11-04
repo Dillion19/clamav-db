@@ -1,53 +1,57 @@
 name: Update ClamAV Database
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # run manually
   schedule:
-    - cron: "12 */6 * * *"  # every 6 hours at :12
+    - cron: "17 6 * * *"    # run daily at 06:17 UTC (change if you like)
+
+permissions:
+  contents: write           # needed to create/update Releases
 
 jobs:
   update:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Set up env
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ClamAV and tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clamav gh
+          sudo apt-get install -y --no-install-recommends clamav clamav-freshclam ca-certificates curl
+          # make sure the daemon isn't holding the DB directory
           sudo systemctl stop clamav-freshclam || true
+          sudo rm -rf /var/lib/clamav/*.cvd /var/lib/clamav/*.cld || true
 
       - name: Fetch latest ClamAV databases (tolerate errors)
         run: |
+          set -e
           mkdir -p db
-          cat > freshclam.conf <<'EOF'
-          DatabaseMirror database.clamav.net
-          DatabaseDirectory db
-          LogVerbose yes
-          LogFile freshclam.log
-          ConnectTimeout 60
-          MaxAttempts 3
-          EOF
-          # Do not fail the job if freshclam returns a non-zero code (rate limit).
-          freshclam --config-file=freshclam.conf || echo "FreshClam completed with warnings"
+          # First try freshclam (fastest). If it fails or misses a file, fall back to HTTPS downloads.
+          freshclam --verbose --datadir=db || true
 
-      - name: Show results
-        run: |
-          ls -lh db || true
-          wc -c db/* || true
-          tail -n +1 freshclam.log || true
+          test -f db/daily.cvd    -o -f db/daily.cld    || curl -fsSLo db/daily.cvd    https://database.clamav.net/daily.cvd
+          test -f db/main.cvd     -o -f db/main.cld     || curl -fsSLo db/main.cvd     https://database.clamav.net/main.cvd
+          test -f db/bytecode.cvd -o -f db/bytecode.cld || curl -fsSLo db/bytecode.cvd https://database.clamav.net/bytecode.cvd
+
+          ls -lh db
 
       - name: Upload artifact (for this run)
         uses: actions/upload-artifact@v4
         with:
           name: clamav-db
           path: |
-            db/main.*
-            db/daily.*
-            db/bytecode.*
+            db/*.cvd
+            db/*.cld
 
       - name: Publish GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ts=$(date -u +"%Y%m%d-%H%M%S")
-          tag="db-${ts}"
-          gh release create "$tag" db/* --title "ClamAV DB $ts" --notes "Automated update"
+          tag="latest"                         # keep a single rolling release
+          gh release delete "$tag" -y || true  # remove old "latest" if it exists
+          gh release create "$tag" db/* \
+            --title "ClamAV DB ($ts)" \
+            --notes "Automated update of ClamAV databases."
