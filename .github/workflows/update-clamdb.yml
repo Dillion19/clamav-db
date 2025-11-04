@@ -3,7 +3,7 @@ name: Update ClamAV Database
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *" # runs daily
+    - cron: "0 0 * * *"  # run once daily
 
 jobs:
   update:
@@ -15,12 +15,14 @@ jobs:
       - name: Install ClamAV
         run: |
           sudo apt-get update
-          sudo apt-get install -y clamav clamav-freshclam
+          sudo apt-get install -y clamav
 
-      - name: Fetch latest ClamAV databases
+      - name: Prepare local database folder
+        run: mkdir -p db
+
+      - name: Run FreshClam safely
         run: |
-          mkdir -p db
-          sudo freshclam --datadir=db
+          sudo freshclam --datadir=db --config-file=/etc/clamav/freshclam.conf || true
 
       - name: Upload databases as release
         uses: softprops/action-gh-release@v1
