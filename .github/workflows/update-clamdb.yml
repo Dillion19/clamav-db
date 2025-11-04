@@ -1,90 +1,108 @@
 name: Update ClamAV Database
 
 on:
-  workflow_dispatch: {}
+  # manual run button
+  workflow_dispatch:
+  # auto: every 6 hours at :17
   schedule:
-    # Run every 6 hours; adjust if you want less/more often
     - cron: "17 */6 * * *"
 
 permissions:
-  contents: write
-
-concurrency:
-  group: clamav-db
-  cancel-in-progress: true
+  contents: write  # needed for commit & release
 
 jobs:
   update:
-    name: Update ClamAV Database
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      RELEASE_TAG: latest
 
     steps:
-      - name: Checkout (for Actions context)
+      - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install ClamAV tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav clamav-freshclam
 
       - name: Prepare config and workspace
         run: |
-          set -euxo pipefail
-          mkdir -p db
+          mkdir -p build/clamdb
 
-      - name: Fetch latest ClamAV databases (safe HTTPS fallback only)
+      - name: Fetch latest ClamAV databases (Cloudflare first, safe fallbacks)
+        shell: bash
         run: |
-          set -euxo pipefail
-          echo "=== Fetching ClamAV database files via HTTPS CDN ==="
-          BASE_URL="https://database.clamav.net"
+          set -euo pipefail
+          UA="curl/7 GitHubActions ClamAV-DB-Updater"
+          OUT="build/clamdb"
 
-          # Prefer .cvd (container) files; .cld often returns 403 to CI/IP ranges
-          need_any=0
-          for f in main.cvd daily.cvd bytecode.cvd; do
-            echo "::group::Download $f"
-            if curl -fL --retry 5 --retry-delay 5 -o "db/$f" "$BASE_URL/$f"; then
-              need_any=1
-              ls -lh "db/$f" || true
-            else
-              echo "WARN: Failed to download $f from $BASE_URL"
-            fi
+          fetch_one () {
+            local base="$1"
+            local dest="$OUT/$base.cvd"
+            # Try Cloudflare mirror first, then the classic host; try .cvd then .cld
+            local urls=(
+              "https://clamav-data.cdn.cloudflare.net/$base.cvd"
+              "https://clamav-data.cdn.cloudflare.net/$base.cld"
+              "https://database.clamav.net/$base.cvd"
+              "https://database.clamav.net/$base.cld"
+            )
+
+            for u in "${urls[@]}"; do
+              echo "Trying $u"
+              if curl -fsSL \
+                   --retry 5 --retry-all-errors \
+                   --connect-timeout 10 --max-time 180 \
+                   -A "$UA" -o "$dest.tmp" "$u"; then
+                mv -f "$dest.tmp" "$dest"
+                echo "OK: downloaded $base from $u"
+                return 0
+              fi
+            done
+
+            echo "ERROR: failed to download $base from all mirrors" >&2
+            return 1
+          }
+
+          fetch_one main
+          fetch_one daily
+          fetch_one bytecode
+
+      - name: Quick validation (informational)
+        continue-on-error: true
+        run: |
+          for f in build/clamdb/*.cvd; do
+            echo "::group::sigtool --verify-cvd $(basename "$f")"
+            sigtool --verify-cvd "$f" || true
             echo "::endgroup::"
           done
 
-          echo "=== Directory contents ==="
-          ls -lh db || true
-
-          if [ "$need_any" -ne 1 ]; then
-            echo "ERROR: No CVD files downloaded."
-            exit 1
-          fi
-
-      - name: Quick validation (informational)
+      - name: Commit updated DB into repo (assets/clamav)
         run: |
-          set -euxo pipefail
-          # Ensure files exist and are >0 bytes
-          for f in main.cvd daily.cvd bytecode.cvd; do
-            if [ -s "db/$f" ]; then
-              echo "OK: db/$f ($(stat -c%s "db/$f") bytes)"
-            else
-              echo "NOTE: db/$f missing (still proceeding if at least one file is present)"
-            fi
-          done
-          du -h db/* || true
+          DEST="assets/clamav"
+          mkdir -p "$DEST"
+          cp -f build/clamdb/*.cvd "$DEST"/
+
+          if git status --porcelain "$DEST" | grep .; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$DEST"
+            git commit -m "Update ClamAV DB ($(date -u +%Y-%m-%dT%H:%MZ))"
+            git push
+          else
+            echo "No changes to commit."
+          fi
 
       - name: Upload artifact (for this run)
         uses: actions/upload-artifact@v4
         with:
-          name: clamav-db
-          path: db/*.cvd
-          if-no-files-found: error
-          retention-days: 7
+          name: clamdb
+          path: build/clamdb/*.cvd
 
-      - name: Publish/Update GitHub Release "latest"
-        uses: ncipollo/release-action@v1
+      - name: Publish/Update GitHub Release 'latest'
+        uses: softprops/action-gh-release@v2
         with:
-          tag: ${{ env.RELEASE_TAG }}
-          name: "ClamAV Database (latest)"
-          body: "Automated refresh of ClamAV database files (main.cvd, daily.cvd, bytecode.cvd)."
-          artifacts: "db/*.cvd"
-          allowUpdates: true
-          replacesArtifacts: true
-          artifactErrorsFailBuild: true
+          tag_name: latest
+          name: Latest ClamAV DB
+          files: build/clamdb/*.cvd
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
