@@ -1,23 +1,21 @@
 name: Update ClamAV Database
 
 on:
-  # Manual button in Actions tab
+  # Run it manually from the Actions tab
   workflow_dispatch:
-  # Automatic refresh (daily 03:00 UTC). Adjust as you like.
+  # And also run it a few times a day to keep things fresh
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "17 */8 * * *"  # every 8 hours at :17
 
-# Don’t let multiple runs overwrite each other
 concurrency:
-  group: clamdb
+  group: clamav-db
   cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    # Needed to create/update the "latest" release and upload assets
     permissions:
-      contents: write
+      contents: write  # needed to publish/update a release
 
     steps:
       - name: Checkout
@@ -25,74 +23,80 @@ jobs:
 
       - name: Install ClamAV and tools
         run: |
+          set -eux
           sudo apt-get update
-          # freshclam + clamscan + curl for fallbacks
-          sudo apt-get install -y clamav curl ca-certificates xz-utils
-          # The service can lock the DB on runners; ensure it's stopped
-          sudo systemctl stop clamav-freshclam 2>/dev/null || true
+          sudo apt-get install -y clamav clamav-freshclam curl jq
+          # Avoid the daemon trying to run on CI
+          sudo systemctl stop clamav-freshclam || true
 
       - name: Prepare config and workspace
         run: |
-          set -e
+          set -eux
+          rm -rf db
           mkdir -p db
-          sudo mkdir -p /etc/clamav
-          # write freshclam.conf with sudo (writing under /etc needs sudo)
-          sudo tee /etc/clamav/freshclam.conf > /dev/null <<'EOF'
+          cat > freshclam.conf <<'EOF'
           DatabaseMirror database.clamav.net
-          NotifyClamd no
-          CompressLocalDatabase yes
-          DatabaseOwner root
           DNSDatabaseInfo current.cvd.clamav.net
+          CompressLocalDatabase yes
+          Bytecode yes
+          Foreground yes
+          UpdateLogFile ./freshclam.log
+          MaxAttempts 3
+          ConnectTimeout 30
           EOF
 
       - name: Fetch latest ClamAV databases (freshclam with safe fallback)
         run: |
-          set -e
-          echo "Attempting freshclam…"
-          # freshclam sometimes returns non-zero (e.g., HTTP 403 rate limits).
-          # We tolerate that and fall back to direct downloads.
-          sudo freshclam --verbose --datadir=db || echo "freshclam failed; will fetch directly."
+          set -euxo pipefail
+          echo "=== Try freshclam ==="
+          if ! freshclam --verbose --datadir=db --config-file=freshclam.conf; then
+            echo "freshclam failed (expected sometimes on CI). Falling back to HTTPS fetch..."
+          fi
 
-          # Fetch any files that are still missing
           fetch() {
             local f="$1"
-            local alt="${f%.cvd}.cld"
-            if [ ! -f "db/$f" ] && [ ! -f "db/$alt" ]; then
-              echo "Direct download: $f"
-              curl -fL --retry 5 --retry-delay 5 -o "db/$f" "https://database.clamav.net/$f"
+            local url="https://database.clamav.net/${f}"
+            if [ ! -s "db/${f}" ]; then
+              echo "Downloading ${f} ..."
+              curl -fL --retry 5 --retry-delay 5 -o "db/${f}" "$url" || echo "WARN: manual fetch of ${f} failed"
+            else
+              echo "${f} already present and non-empty."
             fi
           }
+
+          mkdir -p db
           fetch main.cvd
           fetch daily.cvd
           fetch bytecode.cvd
 
-          echo "Downloaded files:"
-          ls -lh db
+          echo "=== Final database directory ==="
+          ls -lh db || true
+
+          # Ensure we got at least one database file
+          test -s db/main.cvd || test -s db/daily.cvd || test -s db/bytecode.cvd
 
       - name: Quick validation (informational)
         run: |
-          clamscan --version || true
-          file db/* || true
+          set -eux
+          file db/*.cvd || true
+          wc -c db/*.cvd || true
 
       - name: Upload artifact (for this run)
         uses: actions/upload-artifact@v4
         with:
           name: clamav-db
-          path: db/*
+          path: db/*.cvd
           if-no-files-found: error
-          retention-days: 7
 
-      - name: Publish/Update GitHub Release “latest”
+      - name: Publish/Update GitHub Release "latest"
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Latest ClamAV Database
-          body: "Automated refresh of ClamAV database files."
+          name: latest
+          body: "Automated ClamAV database snapshot"
+          files: db/*.cvd
           draft: false
           prerelease: false
-          files: |
-            db/main.cvd
-            db/daily.cvd
-            db/bytecode.cvd
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: false
+          fail_on_unmatched_files: false
+          update_existing: true
