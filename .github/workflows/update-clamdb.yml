@@ -1,30 +1,32 @@
 name: Update ClamAV Database
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '0 3 * * *'   # Runs every day at 3 AM UTC
-  workflow_dispatch:       # Allow manual trigger from Actions tab
+    - cron: "0 0 * * *" # runs daily
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Install ClamAV and GitHub CLI
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ClamAV
         run: |
           sudo apt-get update
-          sudo apt-get install -y clamav clamav-freshclam git curl
-          sudo systemctl stop clamav-freshclam || true
+          sudo apt-get install -y clamav clamav-freshclam
 
       - name: Fetch latest ClamAV databases
         run: |
-          freshclam --datadir=.
+          mkdir -p db
+          sudo freshclam --datadir=db
 
-      - name: Upload databases to GitHub Release
+      - name: Upload databases as release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: ClamAV DB (latest)
+          files: db/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG=db-latest
-          gh release create "$TAG" -t "ClamAV DB (latest)" || true
-          gh release upload "$TAG" main.cvd daily.cvd bytecode.cvd --clobber
