@@ -3,32 +3,51 @@ name: Update ClamAV Database
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *"  # run once daily
+    - cron: "12 */6 * * *"  # every 6 hours at :12
 
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install ClamAV
+      - name: Set up env
         run: |
           sudo apt-get update
-          sudo apt-get install -y clamav
+          sudo apt-get install -y clamav gh
+          sudo systemctl stop clamav-freshclam || true
 
-      - name: Prepare local database folder
-        run: mkdir -p db
-
-      - name: Run FreshClam safely
+      - name: Fetch latest ClamAV databases (tolerate errors)
         run: |
-          sudo freshclam --datadir=db --config-file=/etc/clamav/freshclam.conf || true
+          mkdir -p db
+          cat > freshclam.conf <<'EOF'
+          DatabaseMirror database.clamav.net
+          DatabaseDirectory db
+          LogVerbose yes
+          LogFile freshclam.log
+          ConnectTimeout 60
+          MaxAttempts 3
+          EOF
+          # Do not fail the job if freshclam returns a non-zero code (rate limit).
+          freshclam --config-file=freshclam.conf || echo "FreshClam completed with warnings"
 
-      - name: Upload databases as release
-        uses: softprops/action-gh-release@v1
+      - name: Show results
+        run: |
+          ls -lh db || true
+          wc -c db/* || true
+          tail -n +1 freshclam.log || true
+
+      - name: Upload artifact (for this run)
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: latest
-          name: ClamAV DB (latest)
-          files: db/*
+          name: clamav-db
+          path: |
+            db/main.*
+            db/daily.*
+            db/bytecode.*
+
+      - name: Publish GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ts=$(date -u +"%Y%m%d-%H%M%S")
+          tag="db-${ts}"
+          gh release create "$tag" db/* --title "ClamAV DB $ts" --notes "Automated update"
