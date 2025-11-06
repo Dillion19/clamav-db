@@ -2,6 +2,9 @@ name: Build libclamav (Android arm64-v8a)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-clamav-arm64.yml"
 
 jobs:
   build-clamav-arm64:
@@ -11,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build git pkg-config
@@ -21,17 +24,27 @@ jobs:
         with:
           ndk-version: r27
 
+      # Copy your already-built deps from the app's jniLibs into a local staging dir.
+      # These paths now match your screenshot.
+      - name: Prepare third-party libs
+        run: |
+          set -euxo pipefail
+          mkdir -p thirdparty/arm64-v8a
+          # Required (if present in repo)
+          cp -v app/src/main/jniLibs/arm64-v8a/libxml2.so thirdparty/arm64-v8a/ || echo "libxml2.so missing in repo, continuing"
+          cp -v app/src/main/jniLibs/arm64-v8a/libmspack.so thirdparty/arm64-v8a/ || echo "libmspack.so missing in repo, continuing"
+          # Optional (C++ STL shared runtime)
+          if [ -f app/src/main/jniLibs/arm64-v8a/libc++_shared.so ]; then
+            cp -v app/src/main/jniLibs/arm64-v8a/libc++_shared.so thirdparty/arm64-v8a/
+          fi
+          echo "Staged libs:"
+          ls -la thirdparty/arm64-v8a || true
+
       - name: Fetch ClamAV
         run: |
           git clone --depth 1 https://github.com/Cisco-Talos/clamav.git
           cd clamav
           git submodule update --init --recursive
-
-      - name: Prepare third-party libs
-        run: |
-          mkdir -p thirdparty/arm64-v8a
-          cp -v jniLibs/arm64-v8a/libmspack.so thirdparty/arm64-v8a/
-          cp -v jniLibs/arm64-v8a/libxml2.so thirdparty/arm64-v8a/
 
       - name: Configure (CMake, arm64-v8a)
         working-directory: clamav
@@ -41,6 +54,8 @@ jobs:
           echo "Using NDK from: $NDK_DIR"
           test -d "$NDK_DIR"
 
+          # Build libclamav shared library for Android.
+          # We pass modern Android links (no libandroid-support).
           cmake -S . -B build \
             -G Ninja \
             -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
@@ -48,13 +63,11 @@ jobs:
             -D ANDROID_PLATFORM=24 \
             -D CMAKE_BUILD_TYPE=Release \
             -D BUILD_SHARED_LIBS=ON \
-            -D ENABLE_MSPACK=ON \
-            -D ENABLE_XML=ON \
             -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
+            -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm" \
-            -D LIBXML2_LIBRARIES="$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so" \
-            -D LIBMSPACK_LIBRARIES="$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libmspack.so" \
-            -D CMAKE_FIND_ROOT_PATH="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+            -D ENABLE_CLAMONACC=OFF \
+            -D ENABLE_APP=OFF
 
       - name: Build
         working-directory: clamav
@@ -63,6 +76,7 @@ jobs:
       - name: Collect libclamav.so
         working-directory: clamav
         run: |
+          set -euxo pipefail
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
           sofile="$(find build -name 'libclamav*.so' | head -n 1)"
           cp "$sofile" "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libclamav.so"
