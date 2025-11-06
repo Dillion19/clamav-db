@@ -65,6 +65,7 @@ jobs:
             -D ENABLE_OPENSSL=OFF \
             -D ENABLE_SSL=OFF \
             -D ENABLE_MILTER=OFF \
+            -D ENABLE_PCRE2=OFF \
             -D ENABLE_SIGS_BZIP2=OFF \
             -D ENABLE_SIGS_CRYPTO=OFF \
             -D ENABLE_SIGS_GPG=OFF \
@@ -76,6 +77,10 @@ jobs:
             -D LIBXML2_LIBRARY="$LIBXML2_PATH" \
             -D LIBXML2_INCLUDE_DIR=OFF \
             -D LIBXML2_INCLUDE_DIRS=OFF \
+            -D PCRE2_FOUND=FALSE \
+            -D PCRE2_INCLUDE_DIR=OFF \
+            -D PCRE2_LIBRARIES=OFF \
+            -D PCRE2_LIBRARY=OFF \
             -D OPENSSL_FOUND=FALSE \
             -D OPENSSL_INCLUDE_DIR=OFF \
             -D OPENSSL_LIBRARIES=OFF \
@@ -90,6 +95,7 @@ jobs:
             sed -i 's/find_package(LibXml2 REQUIRED)/# find_package(LibXml2 DISABLED)/' CMakeLists.txt || true
             sed -i 's/find_package(BZip2 REQUIRED)/# find_package(BZip2 DISABLED)/' CMakeLists.txt || true
             sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
+            sed -i 's/find_package(PCRE2 REQUIRED)/# find_package(PCRE2 DISABLED)/' CMakeLists.txt || true
 
             cmake -S . -B build \
               -G Ninja \
@@ -107,6 +113,7 @@ jobs:
               -D ENABLE_OPENSSL=OFF \
               -D ENABLE_SSL=OFF \
               -D ENABLE_MILTER=OFF \
+              -D ENABLE_PCRE2=OFF \
               -D ENABLE_SIGS_BZIP2=OFF \
               -D ENABLE_SIGS_CRYPTO=OFF \
               -D ENABLE_SIGS_GPG=OFF \
@@ -117,6 +124,10 @@ jobs:
               -D LIBXML2_LIBRARY="$LIBXML2_PATH" \
               -D LIBXML2_INCLUDE_DIR=OFF \
               -D LIBXML2_INCLUDE_DIRS=OFF \
+              -D PCRE2_FOUND=FALSE \
+              -D PCRE2_INCLUDE_DIR=OFF \
+              -D PCRE2_LIBRARIES=OFF \
+              -D PCRE2_LIBRARY=OFF \
               -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
