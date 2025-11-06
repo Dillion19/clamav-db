@@ -24,16 +24,12 @@ jobs:
         with:
           ndk-version: r27
 
-      # Copy your already-built deps from the app's jniLibs into a local staging dir.
-      # These paths now match your screenshot.
       - name: Prepare third-party libs
         run: |
           set -euxo pipefail
           mkdir -p thirdparty/arm64-v8a
-          # Required (if present in repo)
-          cp -v app/src/main/jniLibs/arm64-v8a/libxml2.so thirdparty/arm64-v8a/ || echo "libxml2.so missing in repo, continuing"
-          cp -v app/src/main/jniLibs/arm64-v8a/libmspack.so thirdparty/arm64-v8a/ || echo "libmspack.so missing in repo, continuing"
-          # Optional (C++ STL shared runtime)
+          cp -v app/src/main/jniLibs/arm64-v8a/libxml2.so thirdparty/arm64-v8a/ || echo "libxml2.so missing"
+          cp -v app/src/main/jniLibs/arm64-v8a/libmspack.so thirdparty/arm64-v8a/ || echo "libmspack.so missing"
           if [ -f app/src/main/jniLibs/arm64-v8a/libc++_shared.so ]; then
             cp -v app/src/main/jniLibs/arm64-v8a/libc++_shared.so thirdparty/arm64-v8a/
           fi
@@ -51,11 +47,9 @@ jobs:
         run: |
           set -euxo pipefail
           NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
-          echo "Using NDK from: $NDK_DIR"
+          echo "Using NDK: $NDK_DIR"
           test -d "$NDK_DIR"
 
-          # Build libclamav shared library for Android.
-          # We pass modern Android links (no libandroid-support).
           cmake -S . -B build \
             -G Ninja \
             -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
@@ -63,11 +57,15 @@ jobs:
             -D ANDROID_PLATFORM=24 \
             -D CMAKE_BUILD_TYPE=Release \
             -D BUILD_SHARED_LIBS=ON \
+            -D ENABLE_CLAMONACC=OFF \
+            -D ENABLE_APP=OFF \
+            -D ENABLE_TESTS=OFF \
+            -D ENABLE_EXAMPLES=OFF \
+            -D ENABLE_UNRAR=OFF \
+            -D ENABLE_STATIC_LIB=OFF \
             -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
-            -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm" \
-            -D ENABLE_CLAMONACC=OFF \
-            -D ENABLE_APP=OFF
+            -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
 
       - name: Build
         working-directory: clamav
