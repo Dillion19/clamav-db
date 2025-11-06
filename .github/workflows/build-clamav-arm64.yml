@@ -38,6 +38,13 @@ jobs:
           cd clamav
           git submodule update --init --recursive
 
+      - name: Disable libfreshclam
+        working-directory: clamav
+        run: |
+          # Comment out the entire libfreshclam directory inclusion
+          sed -i 's/add_subdirectory(freshclam)/# add_subdirectory(freshclam)/' CMakeLists.txt || true
+          sed -i 's/add_subdirectory(clamonacc)/# add_subdirectory(clamonacc)/' CMakeLists.txt || true
+
       - name: Configure (CMake, arm64-v8a)
         working-directory: clamav
         run: |
@@ -48,7 +55,6 @@ jobs:
 
           LIBXML2_PATH="$GITHUB_WORKSPACE/thirdparty/arm64-v8a/libxml2.so"
 
-          set +e
           cmake -S . -B build \
             -G Ninja \
             -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
@@ -59,17 +65,18 @@ jobs:
             -D ENABLE_APP=OFF \
             -D ENABLE_TESTS=OFF \
             -D ENABLE_EXAMPLES=OFF \
-            -D ENABLE_UNRAR=OFF \
             -D ENABLE_STATIC_LIB=OFF \
+            -D ENABLE_MILTER=OFF \
             -D ENABLE_CLAMONACC=OFF \
+            -D ENABLE_FRESHCLAM=OFF \
             -D ENABLE_OPENSSL=OFF \
             -D ENABLE_SSL=OFF \
-            -D ENABLE_MILTER=OFF \
             -D ENABLE_PCRE2=OFF \
             -D ENABLE_ICONV=OFF \
             -D ENABLE_JSONC=OFF \
             -D ENABLE_CURL=OFF \
             -D ENABLE_LIBCHECK=OFF \
+            -D ENABLE_UNRAR=OFF \
             -D ENABLE_SIGS_BZIP2=OFF \
             -D ENABLE_SIGS_CRYPTO=OFF \
             -D ENABLE_SIGS_GPG=OFF \
@@ -80,64 +87,13 @@ jobs:
             -D LIBXML2_LIBRARY="$LIBXML2_PATH" \
             -D LIBXML2_INCLUDE_DIR=OFF \
             -D LIBXML2_INCLUDE_DIRS=OFF \
-            -D PCRE2_FOUND=FALSE \
-            -D ICONV_FOUND=FALSE \
-            -D JSONC_FOUND=FALSE \
             -D CURL_FOUND=FALSE \
+            -D JSONC_FOUND=FALSE \
+            -D ICONV_FOUND=FALSE \
             -D OPENSSL_FOUND=FALSE \
             -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
-          status=$?
-          set -e
-
-          if [ $status -ne 0 ]; then
-            echo "CMake configure failed — patching to bypass find_package() calls..."
-            sed -i 's/find_package(LibXml2 REQUIRED)/# find_package(LibXml2 DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(BZip2 REQUIRED)/# find_package(BZip2 DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(PCRE2 REQUIRED)/# find_package(PCRE2 DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(Iconv REQUIRED)/# find_package(Iconv DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(JSONC REQUIRED)/# find_package(JSONC DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(CURL REQUIRED)/# find_package(CURL DISABLED)/' CMakeLists.txt || true
-
-            cmake -S . -B build \
-              -G Ninja \
-              -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
-              -D ANDROID_ABI=arm64-v8a \
-              -D ANDROID_PLATFORM=24 \
-              -D CMAKE_BUILD_TYPE=Release \
-              -D BUILD_SHARED_LIBS=ON \
-              -D ENABLE_APP=OFF \
-              -D ENABLE_TESTS=OFF \
-              -D ENABLE_EXAMPLES=OFF \
-              -D ENABLE_UNRAR=OFF \
-              -D ENABLE_STATIC_LIB=OFF \
-              -D ENABLE_CLAMONACC=OFF \
-              -D ENABLE_OPENSSL=OFF \
-              -D ENABLE_SSL=OFF \
-              -D ENABLE_MILTER=OFF \
-              -D ENABLE_PCRE2=OFF \
-              -D ENABLE_ICONV=OFF \
-              -D ENABLE_JSONC=OFF \
-              -D ENABLE_CURL=OFF \
-              -D ENABLE_SIGS_BZIP2=OFF \
-              -D ENABLE_SIGS_CRYPTO=OFF \
-              -D ENABLE_SIGS_GPG=OFF \
-              -D ENABLE_SIGS_OPENSSL=OFF \
-              -D ENABLE_LIBCHECK=OFF \
-              -D LIBXML2_FOUND=TRUE \
-              -D LIBXML2_LIBRARIES="$LIBXML2_PATH" \
-              -D LIBXML2_LIBRARY="$LIBXML2_PATH" \
-              -D LIBXML2_INCLUDE_DIR=OFF \
-              -D LIBXML2_INCLUDE_DIRS=OFF \
-              -D CURL_FOUND=FALSE \
-              -D JSONC_FOUND=FALSE \
-              -D ICONV_FOUND=FALSE \
-              -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
-              -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
-              -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
-          fi
 
       - name: Build
         working-directory: clamav
