@@ -1,11 +1,21 @@
-name: Build libclamav (Android arm64-v8a)
+name: Build ClamAV (arm64-v8a)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-clamav-arm64.yml"
+      - "app/src/main/jniLibs/arm64-v8a/**"
 
 jobs:
-  build-clamav-arm64:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
+
+    env:
+      ANDROID_API: "24"
+      ANDROID_ABI: "arm64-v8a"
+      ANDROID_NDK_VERSION: "27.2.12479018"
+      NDK_DIR: "/usr/local/lib/android/sdk/ndk/27.3.13757024"
 
     steps:
       - name: Checkout
@@ -14,117 +24,111 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build git pkg-config binutils
+          sudo apt-get install -y --no-install-recommends \
+            git cmake ninja-build autoconf automake libtool pkg-config \
+            unzip xz-utils
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r27
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
 
+      # ---- Bring in ClamAV source ----
+      - name: Fetch ClamAV source
+        run: |
+          git clone --depth=1 https://github.com/Cisco-Talos/clamav.git
+          cd clamav
+          # Keep the tree minimal
+          git submodule update --init --depth=1
+
+      # ---- Stage your prebuilt third-party .so files (libmspack, libxml2) ----
       - name: Prepare third-party libs
+        working-directory: clamav
+        run: |
+          mkdir -p thirdparty/${{ env.ANDROID_ABI }}
+          # Copy from your repo's Android jniLibs folder
+          cp -v ../app/src/main/jniLibs/${{ env.ANDROID_ABI }}/libmspack.so thirdparty/${{ env.ANDROID_ABI }}/
+          cp -v ../app/src/main/jniLibs/${{ env.ANDROID_ABI }}/libxml2.so thirdparty/${{ env.ANDROID_ABI }}/
+
+      # ---- Patch CMake to stop early OpenSSL (and other optional) detection ----
+      - name: Disable freshclam/tools and neutralize optional find_package calls
+        working-directory: clamav
         run: |
           set -euxo pipefail
-          mkdir -p thirdparty/arm64-v8a
-          cp -v app/src/main/jniLibs/arm64-v8a/libxml2.so thirdparty/arm64-v8a/ || echo "libxml2.so missing (ok)"
-          cp -v app/src/main/jniLibs/arm64-v8a/libmspack.so thirdparty/arm64-v8a/ || echo "libmspack.so missing (ok)"
-          if [ -f app/src/main/jniLibs/arm64-v8a/libc++_shared.so ]; then
-            cp -v app/src/main/jniLibs/arm64-v8a/libc++_shared.so thirdparty/arm64-v8a/
-          fi
-          ls -la thirdparty/arm64-v8a || true
 
-      - name: Fetch ClamAV
-        run: |
-          git clone --depth 1 https://github.com/Cisco-Talos/clamav.git
-          cd clamav
-          git submodule update --init --recursive
+          # Comment out optional apps that pull SSL/JSON/CURL/etc.
+          sed -i 's/^[[:space:]]*add_subdirectory(.*freshclam.*)/# &/g' CMakeLists.txt || true
+          sed -i 's/^[[:space:]]*add_subdirectory(.*clamonacc.*)/# &/g' CMakeLists.txt || true
+          sed -i 's/^[[:space:]]*add_subdirectory(.*examples.*)/# &/g' CMakeLists.txt || true
+          sed -i 's/^[[:space:]]*add_subdirectory(.*test.*)/# &/g' CMakeLists.txt || true
+          sed -i 's/^[[:space:]]*add_subdirectory(.*milter.*)/# &/g' CMakeLists.txt || true
 
-      - name: Disable libfreshclam
-        working-directory: clamav
-        run: |
-          # Comment out the entire libfreshclam directory inclusion
-          sed -i 's/add_subdirectory(freshclam)/# add_subdirectory(freshclam)/' CMakeLists.txt || true
-          sed -i 's/add_subdirectory(clamonacc)/# add_subdirectory(clamonacc)/' CMakeLists.txt || true
+          # Neutralize top-level find_package calls that can fail on CI
+          for PKG in OpenSSL CURL JSONC PCRE2 Iconv; do
+            sed -i "s/^[[:space:]]*find_package(${PKG}.*/# find_package(${PKG}) disabled for Android/g" CMakeLists.txt || true
+          done
 
-- name: Disable libfreshclam and OpenSSL detection
-        working-directory: clamav
-        run: |
-          # disable unnecessary subprojects
-          sed -i 's/add_subdirectory(freshclam)/# add_subdirectory(freshclam)/' CMakeLists.txt || true
-          sed -i 's/add_subdirectory(clamonacc)/# add_subdirectory(clamonacc)/' CMakeLists.txt || true
-          # neutralize OpenSSL requirement early
-          sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
-          sed -i 's/find_package(OpenSSL)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
-
+      # ---- Configure & build libclamav only (shared) ----
       - name: Configure (CMake, arm64-v8a)
         working-directory: clamav
+        env:
+          ANDROID_NDK_HOME: ${{ env.NDK_DIR }}
         run: |
           set -euxo pipefail
-          NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
-          echo "Using NDK: $NDK_DIR"
-          test -d "$NDK_DIR"
 
-          LIBXML2_PATH="$GITHUB_WORKSPACE/thirdparty/arm64-v8a/libxml2.so"
+          # Toolchain file from NDK
+          TOOLCHAIN="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+
+          # Library hints for our prebuilt .so files
+          export LD_LIBRARY_PATH="$PWD/thirdparty/${{ env.ANDROID_ABI }}:$LD_LIBRARY_PATH"
 
           cmake -S . -B build \
             -G Ninja \
-            -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
-            -D ANDROID_ABI=arm64-v8a \
-            -D ANDROID_PLATFORM=24 \
+            -D CMAKE_TOOLCHAIN_FILE="${TOOLCHAIN}" \
+            -D ANDROID_ABI=${{ env.ANDROID_ABI }} \
+            -D ANDROID_PLATFORM=android-${{ env.ANDROID_API }} \
             -D CMAKE_BUILD_TYPE=Release \
             -D BUILD_SHARED_LIBS=ON \
+            \
+            # turn OFF optional products that drag in many deps
             -D ENABLE_APP=OFF \
+            -D ENABLE_TOOLS=OFF \
             -D ENABLE_TESTS=OFF \
             -D ENABLE_EXAMPLES=OFF \
-            -D ENABLE_STATIC_LIB=OFF \
             -D ENABLE_MILTER=OFF \
-            -D ENABLE_CLAMONACC=OFF \
             -D ENABLE_FRESHCLAM=OFF \
+            -D ENABLE_CLAMONACC=OFF \
+            \
+            # crypto / net / regex / charsets disabled on Android build
             -D ENABLE_OPENSSL=OFF \
-            -D ENABLE_SSL=OFF \
+            -D ENABLE_LIBCURL=OFF \
+            -D ENABLE_JSON=OFF \
+            -D ENABLE_JSON_SHARED=OFF \
             -D ENABLE_PCRE2=OFF \
             -D ENABLE_ICONV=OFF \
-            -D ENABLE_JSONC=OFF \
-            -D ENABLE_CURL=OFF \
-            -D ENABLE_LIBCHECK=OFF \
-            -D ENABLE_UNRAR=OFF \
-            -D ENABLE_SIGS_BZIP2=OFF \
-            -D ENABLE_SIGS_CRYPTO=OFF \
-            -D ENABLE_SIGS_GPG=OFF \
-            -D ENABLE_SIGS_OPENSSL=OFF \
-            -D BZIP2_FOUND=FALSE \
-            -D LIBXML2_FOUND=TRUE \
-            -D LIBXML2_LIBRARIES="$LIBXML2_PATH" \
-            -D LIBXML2_LIBRARY="$LIBXML2_PATH" \
-            -D LIBXML2_INCLUDE_DIR=OFF \
-            -D LIBXML2_INCLUDE_DIRS=OFF \
-            -D CURL_FOUND=FALSE \
-            -D JSONC_FOUND=FALSE \
-            -D ICONV_FOUND=FALSE \
-            -D OPENSSL_FOUND=FALSE \
-            -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
-            -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
-            -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
+            \
+            # we still want XML + mspack + zlib support
+            -D ENABLE_XML=ON \
+            -D ENABLE_ZLIB=ON \
+            \
+            # Hint locations for our staged binaries
+            -D LIBXML2_LIBRARY="$PWD/thirdparty/${{ env.ANDROID_ABI }}/libxml2.so" \
+            -D LIBXML2_LIBRARIES="$PWD/thirdparty/${{ env.ANDROID_ABI }}/libxml2.so" \
+            -D MSPACK_LIBRARY="$PWD/thirdparty/${{ env.ANDROID_ABI }}/libmspack.so" \
+            -D MSPACK_LIBRARIES="$PWD/thirdparty/${{ env.ANDROID_ABI }}/libmspack.so"
 
-      - name: Build
+      - name: Build (arm64-v8a)
         working-directory: clamav
-        run: cmake --build build -j
+        run: |
+          cmake --build build --config Release -j$(nproc)
 
       - name: Collect libclamav.so
-        working-directory: clamav
         run: |
-          set -euxo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
-          sofile="$(find build -name 'libclamav*.so' | head -n 1)"
-          cp "$sofile" "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libclamav.so"
-          ls -la "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
+          mkdir -p out/${{ env.ANDROID_ABI }}
+          cp -v clamav/build/lib/libclamav.so out/${{ env.ANDROID_ABI }}/
 
-      - name: Post-build dependency check
-        run: |
-          echo "NEEDED dependencies for libclamav.so:"
-          readelf -d jniLibs/arm64-v8a/libclamav.so | grep NEEDED || true
-
-      - name: Upload artifact
+      - name: Upload artifact (libclamav)
         uses: actions/upload-artifact@v4
         with:
-          name: libclamav-arm64-v8a
-          path: jniLibs/arm64-v8a/libclamav.so
+          name: libclamav-${{ env.ANDROID_ABI }}
+          path: out/${{ env.ANDROID_ABI }}/libclamav.so
