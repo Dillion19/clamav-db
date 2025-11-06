@@ -45,30 +45,40 @@ jobs:
 
           API=24
           TOOLBIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
-          # Use the NDK "prefabbed" compiler drivers (these already embed the right sysroot).
+          # Use NDK's preconfigured compiler drivers (they embed the sysroot/target)
           export CC="$TOOLBIN/${TRIPLE}${API}-clang"
           export CXX="$TOOLBIN/${TRIPLE}${API}-clang++"
           export AR="$TOOLBIN/llvm-ar"
           export RANLIB="$TOOLBIN/llvm-ranlib"
           export STRIP="$TOOLBIN/llvm-strip"
+          unset LD  # let clang pick the right linker
 
-          # Keep it simple: let clang find/link everything via its default sysroot.
-          unset LD
+          # Flags
           export CPPFLAGS=""
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-fuse-ld=lld -Wl,--as-needed"
 
-          # Avoid host pkg-config poisoning cross build
+          # Prevent host pkg-config from poisoning cross build
           export PKG_CONFIG_LIBDIR=""
 
-          # Generate ./configure
+          # --- Toolchain sanity check (compile a tiny program) -----------------
+          echo 'int main(void){return 0;}' > sanity.c
+          if ! $CC sanity.c -o sanity 2> sanity.err; then
+            echo "Compiler failed on a trivial program."
+            echo "=== \$CC -v ==="; $CC -v || true
+            echo "=== sanity.err ==="; cat sanity.err || true
+            exit 1
+          fi
+          rm -f sanity sanity.c sanity.err
+          # --------------------------------------------------------------------
+
+          # Generate configure
           chmod +x autogen.sh
           ./autogen.sh
 
-          # Cross-compile: pre-answer checks so configure doesn't try to run target binaries.
-          ./configure \
+          # Configure for cross-compile; pre-answer checks so it won't try to run target binaries
+          if ! ./configure \
             --host="$TRIPLE" \
             --build=x86_64-linux-gnu \
             --prefix="$PWD/out-${{ matrix.abi }}" \
@@ -80,8 +90,13 @@ jobs:
             ac_cv_c_bigendian=no \
             ac_cv_exeext=no \
             ac_cv_prog_cc_cross=yes \
-            ac_cv_prog_cc_works=yes \
-          || { echo "===== BEGIN config.log ====="; sed -n '1,200p' config.log || true; echo "===== END config.log ====="; exit 1; }
+            ac_cv_prog_cc_works=yes
+          then
+            echo "===== BEGIN config.log ====="
+            cat config.log || true
+            echo "=====  END config.log  ====="
+            exit 1
+          fi
 
           make -j"$(nproc)"
           make install
