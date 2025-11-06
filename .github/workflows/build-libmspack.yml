@@ -22,7 +22,7 @@ jobs:
       - name: Fetch libmspack (official git mirror)
         run: |
           git clone --depth 1 https://github.com/kyz/libmspack.git
-          ls -la libmspack
+          ls -la libmspack/libmspack
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
@@ -30,7 +30,7 @@ jobs:
           ndk-version: r27
 
       - name: Build ${{ matrix.abi }}
-        working-directory: libmspack
+        working-directory: libmspack/libmspack
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
@@ -56,9 +56,9 @@ jobs:
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-Wl,--as-needed"
 
-          # libmspack repo already includes a pre-generated ./configure script
+          # Make sure configure script exists
           if [ ! -f configure ]; then
-            echo "configure missing — something's wrong with repo"
+            echo "configure missing; list contents:"
             ls -la
             exit 1
           fi
@@ -89,4 +89,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: config-log-${{ matrix.abi }}
-          path: libmspack/config.log
+          path: libmspack/libmspack/config.log
