@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build git
@@ -21,16 +21,16 @@ jobs:
         with:
           ndk-version: r27
 
-      - name: Fetch libxml2
+      - name: Fetch libxml2 source
         run: |
           git clone --depth 1 https://github.com/GNOME/libxml2.git
           ls -la libxml2
 
-      
-- name: Configure (CMake, arm64-v8a)
+      - name: Configure (CMake, arm64-v8a)
         working-directory: libxml2
         run: |
           set -euxo pipefail
+          # Use the path exported by setup-ndk
           NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
           echo "Using NDK from: $NDK_DIR"
           test -d "$NDK_DIR"
@@ -58,7 +58,6 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
-          # find the produced shared lib and copy it as unversioned name
           sofile="$(find build -name 'libxml2*.so' | head -n 1)"
           cp "$sofile" "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so"
           ls -la "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
