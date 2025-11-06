@@ -24,7 +24,6 @@ jobs:
         with:
           ndk-version: r27
 
-      # Stages your existing dependency .so files from the app's repo path.
       - name: Prepare third-party libs
         run: |
           set -euxo pipefail
@@ -42,7 +41,7 @@ jobs:
           cd clamav
           git submodule update --init --recursive
 
-      - name: Configure (CMake, arm64-v8a) — try without OpenSSL; fallback patches if needed
+      - name: Configure (CMake, arm64-v8a) — skip SSL & BZip2
         working-directory: clamav
         run: |
           set -euxo pipefail
@@ -50,7 +49,6 @@ jobs:
           echo "Using NDK: $NDK_DIR"
           test -d "$NDK_DIR"
 
-          # --- First attempt: disable OpenSSL/crypto cleanly via CMake flags ---
           set +e
           cmake -S . -B build \
             -G Ninja \
@@ -73,6 +71,11 @@ jobs:
             -D ENABLE_SIGS_GPG=OFF \
             -D ENABLE_SIGS_OPENSSL=OFF \
             -D ENABLE_LIBCHECK=OFF \
+            -D BZIP2_FOUND=FALSE \
+            -D BZIP2_INCLUDE_DIR=OFF \
+            -D BZIP2_LIBRARIES=OFF \
+            -D BZIP2_LIBRARY=OFF \
+            -D BZIP2_INCLUDE_DIRS=OFF \
             -D OPENSSL_FOUND=FALSE \
             -D OPENSSL_ROOT_DIR=OFF \
             -D OPENSSL_INCLUDE_DIR=OFF \
@@ -85,11 +88,12 @@ jobs:
           status=$?
           set -e
 
-          # --- Fallback: patch CMakeLists to remove hard REQUIRE on OpenSSL and reconfigure ---
           if [ $status -ne 0 ]; then
-            echo "First CMake configure failed; patching CMakeLists.txt to bypass OpenSSL detection…"
+            echo "CMake configure failed — patching source to skip find_package() calls"
             sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
             sed -i 's/find_package(OpenSSL QUIET REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
+            sed -i 's/find_package(BZip2 REQUIRED)/# find_package(BZip2 DISABLED)/' CMakeLists.txt || true
+            sed -i 's/find_package(BZip2 QUIET REQUIRED)/# find_package(BZip2 DISABLED)/' CMakeLists.txt || true
 
             cmake -S . -B build \
               -G Ninja \
@@ -112,12 +116,11 @@ jobs:
               -D ENABLE_SIGS_GPG=OFF \
               -D ENABLE_SIGS_OPENSSL=OFF \
               -D ENABLE_LIBCHECK=OFF \
-              -D OPENSSL_FOUND=FALSE \
-              -D OPENSSL_ROOT_DIR=OFF \
-              -D OPENSSL_INCLUDE_DIR=OFF \
-              -D OPENSSL_CRYPTO_LIBRARY=OFF \
-              -D OPENSSL_SSL_LIBRARY=OFF \
-              -D OPENSSL_LIBRARIES=OFF \
+              -D BZIP2_FOUND=FALSE \
+              -D BZIP2_INCLUDE_DIR=OFF \
+              -D BZIP2_LIBRARIES=OFF \
+              -D BZIP2_LIBRARY=OFF \
+              -D BZIP2_INCLUDE_DIRS=OFF \
               -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
@@ -136,7 +139,6 @@ jobs:
           cp "$sofile" "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libclamav.so"
           ls -la "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
 
-      # Quick sanity: list DT_NEEDED deps so we know what Android will try to dlopen.
       - name: Post-build dependency check
         run: |
           echo "NEEDED dependencies for libclamav.so:"
