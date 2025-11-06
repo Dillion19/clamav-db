@@ -45,28 +45,33 @@ jobs:
 
           API=24
           TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
-          export CC="$TOOLCHAIN/${TRIPLE}${API}-clang"
-          export CXX="$TOOLCHAIN/${TRIPLE}${API}-clang++"
+          # Drive clang/clang++ explicitly with target+sysroot.
+          # Let clang invoke the linker; don't override LD.
+          export CC="$TOOLCHAIN/clang --target=${TRIPLE}${API} --sysroot=$SYSROOT"
+          export CXX="$TOOLCHAIN/clang++ --target=${TRIPLE}${API} --sysroot=$SYSROOT"
           export AR="$TOOLCHAIN/llvm-ar"
           export RANLIB="$TOOLCHAIN/llvm-ranlib"
-          export LD="$TOOLCHAIN/ld.lld"
           export STRIP="$TOOLCHAIN/llvm-strip"
-          export CFLAGS="-fPIC -O2"
-          export LDFLAGS="-Wl,--as-needed"
+
+          # Flags: add sysroot + lld for safety
+          export CPPFLAGS="--sysroot=$SYSROOT"
+          export CFLAGS="-fPIC -O2 --sysroot=$SYSROOT"
+          export LDFLAGS="--sysroot=$SYSROOT -fuse-ld=lld -Wl,--as-needed"
 
           # Generate configure
           chmod +x autogen.sh
           ./autogen.sh
 
-          # Tell configure we’re cross-compiling and skip runtime tests
+          # Cross-compile; pre-answer checks so configure doesn't try to run test binaries.
           ./configure \
             --host="$TRIPLE" \
             --build=x86_64-linux-gnu \
             --prefix="$PWD/out-${{ matrix.abi }}" \
             --enable-shared \
             --disable-static \
-            --disable-maintainer-mode \
+            --disable-dependency-tracking \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
             ac_cv_c_bigendian=no \
@@ -74,8 +79,7 @@ jobs:
             ac_cv_prog_cc_works=yes \
             ac_cv_exeext=no
 
-          # Build library
-          make -j"$(nproc)" || (cat config.log || true; exit 1)
+          make -j"$(nproc)"
           make install
 
           # Collect into jniLibs folder
