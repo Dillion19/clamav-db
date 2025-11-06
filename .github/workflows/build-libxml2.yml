@@ -26,12 +26,13 @@ jobs:
           git clone --depth 1 https://github.com/GNOME/libxml2.git
           ls -la libxml2
 
-      - name: Configure (CMake, arm64-v8a)
+      
+- name: Configure (CMake, arm64-v8a)
         working-directory: libxml2
-        env:
-          NDK_DIR: ${{ env.ANDROID_NDK_ROOT }}
         run: |
           set -euxo pipefail
+          NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+          echo "Using NDK from: $NDK_DIR"
           test -d "$NDK_DIR"
 
           cmake -S . -B build \
