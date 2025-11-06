@@ -2,9 +2,6 @@ name: Build libclamav (Android arm64-v8a)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/build-clamav-arm64.yml"
 
 jobs:
   build-clamav-arm64:
@@ -41,13 +38,15 @@ jobs:
           cd clamav
           git submodule update --init --recursive
 
-      - name: Configure (CMake, arm64-v8a) — skip SSL & BZip2
+      - name: Configure (CMake, arm64-v8a)
         working-directory: clamav
         run: |
           set -euxo pipefail
           NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
           echo "Using NDK: $NDK_DIR"
           test -d "$NDK_DIR"
+
+          LIBXML2_PATH="$GITHUB_WORKSPACE/thirdparty/arm64-v8a/libxml2.so"
 
           set +e
           cmake -S . -B build \
@@ -72,15 +71,13 @@ jobs:
             -D ENABLE_SIGS_OPENSSL=OFF \
             -D ENABLE_LIBCHECK=OFF \
             -D BZIP2_FOUND=FALSE \
-            -D BZIP2_INCLUDE_DIR=OFF \
-            -D BZIP2_LIBRARIES=OFF \
-            -D BZIP2_LIBRARY=OFF \
-            -D BZIP2_INCLUDE_DIRS=OFF \
+            -D LIBXML2_FOUND=TRUE \
+            -D LIBXML2_LIBRARIES="$LIBXML2_PATH" \
+            -D LIBXML2_LIBRARY="$LIBXML2_PATH" \
+            -D LIBXML2_INCLUDE_DIR=OFF \
+            -D LIBXML2_INCLUDE_DIRS=OFF \
             -D OPENSSL_FOUND=FALSE \
-            -D OPENSSL_ROOT_DIR=OFF \
             -D OPENSSL_INCLUDE_DIR=OFF \
-            -D OPENSSL_CRYPTO_LIBRARY=OFF \
-            -D OPENSSL_SSL_LIBRARY=OFF \
             -D OPENSSL_LIBRARIES=OFF \
             -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
@@ -89,11 +86,10 @@ jobs:
           set -e
 
           if [ $status -ne 0 ]; then
-            echo "CMake configure failed — patching source to skip find_package() calls"
-            sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(OpenSSL QUIET REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
+            echo "CMake configure failed — patching to bypass find_package() calls..."
+            sed -i 's/find_package(LibXml2 REQUIRED)/# find_package(LibXml2 DISABLED)/' CMakeLists.txt || true
             sed -i 's/find_package(BZip2 REQUIRED)/# find_package(BZip2 DISABLED)/' CMakeLists.txt || true
-            sed -i 's/find_package(BZip2 QUIET REQUIRED)/# find_package(BZip2 DISABLED)/' CMakeLists.txt || true
+            sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
 
             cmake -S . -B build \
               -G Ninja \
@@ -116,11 +112,11 @@ jobs:
               -D ENABLE_SIGS_GPG=OFF \
               -D ENABLE_SIGS_OPENSSL=OFF \
               -D ENABLE_LIBCHECK=OFF \
-              -D BZIP2_FOUND=FALSE \
-              -D BZIP2_INCLUDE_DIR=OFF \
-              -D BZIP2_LIBRARIES=OFF \
-              -D BZIP2_LIBRARY=OFF \
-              -D BZIP2_INCLUDE_DIRS=OFF \
+              -D LIBXML2_FOUND=TRUE \
+              -D LIBXML2_LIBRARIES="$LIBXML2_PATH" \
+              -D LIBXML2_LIBRARY="$LIBXML2_PATH" \
+              -D LIBXML2_INCLUDE_DIR=OFF \
+              -D LIBXML2_INCLUDE_DIRS=OFF \
               -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
