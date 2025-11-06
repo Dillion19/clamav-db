@@ -1,10 +1,42 @@
-- name: Build ${{ matrix.abi }}
+name: Build libmspack for Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-libmspack:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: [arm64-v8a, x86_64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools (autotools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool pkg-config git
+
+      - name: Fetch libmspack (official Git mirror)
+        run: |
+          git clone --depth 1 https://github.com/kyz/libmspack.git
+          ls -la libmspack
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27
+
+      - name: Build ${{ matrix.abi }}
         working-directory: libmspack
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
           set -euxo pipefail
 
+          # Map ABI -> Android target triple
           case "${{ matrix.abi }}" in
             arm64-v8a) TRIPLE=aarch64-linux-android ;;
             x86_64)    TRIPLE=x86_64-linux-android ;;
@@ -13,18 +45,23 @@
 
           API=24
           TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          # Toolchain
           export CC="$TOOLCHAIN/${TRIPLE}${API}-clang"
           export CXX="$TOOLCHAIN/${TRIPLE}${API}-clang++"
           export AR="$TOOLCHAIN/llvm-ar"
           export RANLIB="$TOOLCHAIN/llvm-ranlib"
           export LD="$TOOLCHAIN/ld.lld"
           export STRIP="$TOOLCHAIN/llvm-strip"
+
+          # Flags
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-Wl,--as-needed"
 
           # Generate ./configure for the git checkout
           autoreconf -fi
 
+          # Configure for Android, build shared .so
           ./configure --host="$TRIPLE" \
                       --prefix="$PWD/out-${{ matrix.abi }}" \
                       --enable-shared --disable-static
@@ -32,10 +69,25 @@
           make -j"$(nproc)"
           make install
 
+          # Collect the .so in a jniLibs-like layout for easy download
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}"
-          # copy unversioned name for Android packaging
           if [ -f .libs/libmspack.so ]; then
             cp .libs/libmspack.so "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libmspack.so"
           else
+            # Some libtool builds only emit versioned names
             cp .libs/libmspack.so.* "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libmspack.so"
           fi
+
+      - name: Upload artifact (${{ matrix.abi }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmspack-${{ matrix.abi }}
+          path: jniLibs/${{ matrix.abi }}/libmspack.so
+
+      # Optional: if something fails above, upload logs to help debugging next time
+      - name: Upload config.log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-log-${{ matrix.abi }}
+          path: libmspack/config.log
