@@ -1,17 +1,14 @@
-name: Build libxml2 for Android (no ICU)
+name: Build libxml2 (Android arm64-v8a, no ICU)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-libxml2:
+  build-libxml2-arm64:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        abi: [arm64-v8a, x86_64]
 
     steps:
-      - name: Checkout (your repo)
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install autotools
@@ -24,32 +21,25 @@ jobs:
         with:
           ndk-version: r27
 
-      - name: Fetch libxml2 source
+      - name: Fetch libxml2
         run: |
-          # GitHub mirror of GNOME libxml2
           git clone --depth 1 https://github.com/GNOME/libxml2.git
           ls -la libxml2
 
-      - name: Build ${{ matrix.abi }}
+      - name: Build arm64-v8a
         working-directory: libxml2
         run: |
           set -euxo pipefail
 
-          # Resolve NDK dir from the setup action
+          # Resolve NDK path from setup-ndk
           NDK_DIR="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}"
           test -d "$NDK_DIR"
-
           TOOLBIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
-          case "${{ matrix.abi }}" in
-            arm64-v8a) TRIPLE=aarch64-linux-android ;;
-            x86_64)    TRIPLE=x86_64-linux-android ;;
-            *) echo "Unsupported ABI"; exit 1 ;;
-          esac
+          TRIPLE=aarch64-linux-android
           API=24
 
           # Use NDK-provided compiler drivers (embed sysroot/target)
-          export CC="$toolbin/${TRIPLE}${API}-clang"; toolbin="$TOOLBIN"
           export CC="$TOOLBIN/${TRIPLE}${API}-clang"
           export CXX="$TOOLBIN/${TRIPLE}${API}-clang++"
           export AR="$TOOLBIN/llvm-ar"
@@ -57,29 +47,23 @@ jobs:
           export STRIP="$TOOLBIN/llvm-strip"
           unset LD
 
-          # Keep flags simple; zlib comes from NDK sysroot automatically
+          # Flags & pkg-config isolation
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-fuse-ld=lld -Wl,--as-needed"
           export PKG_CONFIG_LIBDIR=""
 
-          # Quick compiler sanity check (one-line C)
+          # Sanity compile
           echo 'int main(void){return 0;}' > sanity.c
           $CC sanity.c -o sanity
           rm -f sanity sanity.c
 
-          # Bootstrap autotools & configure
+          # Bootstrap & configure WITHOUT ICU/Python/iconv/lzma
           chmod +x autogen.sh
           ./autogen.sh
-
-          # Configure with ICU/python/iconv/lzma disabled
-          #  - no ICU dependency
-          #  - no Python bindings
-          #  - no external iconv (Android bionic has basic iconv but avoid external)
-          #  - no liblzma (xz) to keep deps minimal
           ./configure \
             --host="$TRIPLE" \
             --build=x86_64-linux-gnu \
-            --prefix="$PWD/out-${{ matrix.abi }}" \
+            --prefix="$PWD/out-arm64-v8a" \
             --enable-shared \
             --disable-static \
             --without-icu \
@@ -88,29 +72,29 @@ jobs:
             --without-lzma \
             --with-zlib=yes \
             ac_cv_prog_cc_cross=yes \
-            ac_cv_exeext=no || { echo "===== BEGIN config.log ====="; cat config.log || true; echo "===== END config.log ====="; exit 1; }
+            ac_cv_exeext=no \
+          || { echo "===== BEGIN config.log ====="; cat config.log || true; echo "===== END config.log ====="; exit 1; }
 
           make -j"$(nproc)"
           make install
 
-          # libtool may output versioned soname (e.g., libxml2.so.2)
-          # Copy/rename to unversioned 'libxml2.so' for Android packaging.
-          mkdir -p "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}"
+          # Copy to jniLibs-style path with unversioned name
+          mkdir -p "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
           if [ -f .libs/libxml2.so ]; then
-            cp .libs/libxml2.so "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libxml2.so"
+            cp .libs/libxml2.so "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so"
           else
-            cp .libs/libxml2.so.* "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libxml2.so"
+            cp .libs/libxml2.so.* "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so"
           fi
 
-      - name: Upload artifact (${{ matrix.abi }})
+      - name: Upload artifact (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
-          name: libxml2-${{ matrix.abi }}
-          path: jniLibs/${{ matrix.abi }}/libxml2.so
+          name: libxml2-arm64-v8a
+          path: jniLibs/arm64-v8a/libxml2.so
 
       - name: Upload config.log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: config-log-${{ matrix.abi }}
+          name: config-log-arm64
           path: libxml2/config.log
