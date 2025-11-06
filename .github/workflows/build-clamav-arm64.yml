@@ -63,6 +63,7 @@ jobs:
             -D ENABLE_EXAMPLES=OFF \
             -D ENABLE_UNRAR=OFF \
             -D ENABLE_STATIC_LIB=OFF \
+            -D ENABLE_OPENSSL=OFF \
             -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
