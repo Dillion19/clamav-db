@@ -1,4 +1,4 @@
-name: Build libxml2 (Android arm64-v8a, no ICU, strict cross)
+name: Build libxml2 (Android arm64-v8a, no ICU) via CMake
 
 on:
   workflow_dispatch:
@@ -11,10 +11,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install autotools
+      - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake libtool pkg-config git
+          sudo apt-get install -y cmake ninja-build git
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
@@ -24,87 +24,46 @@ jobs:
       - name: Fetch libxml2
         run: |
           git clone --depth 1 https://github.com/GNOME/libxml2.git
+          ls -la libxml2
 
-      - name: Build arm64-v8a
+      - name: Configure (CMake, arm64-v8a)
+        working-directory: libxml2
+        env:
+          NDK_DIR: ${{ env.ANDROID_NDK_ROOT }}
+        run: |
+          set -euxo pipefail
+          test -d "$NDK_DIR"
+
+          cmake -S . -B build \
+            -G Ninja \
+            -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
+            -D ANDROID_ABI=arm64-v8a \
+            -D ANDROID_PLATFORM=24 \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D BUILD_SHARED_LIBS=ON \
+            -D LIBXML2_WITH_ICU=OFF \
+            -D LIBXML2_WITH_PYTHON=OFF \
+            -D LIBXML2_WITH_LZMA=OFF \
+            -D LIBXML2_WITH_ZLIB=ON \
+            -D LIBXML2_WITH_ICONV=OFF \
+            -D LIBXML2_WITH_PROGRAMS=OFF
+
+      - name: Build
+        working-directory: libxml2
+        run: cmake --build build -j
+
+      - name: Collect libxml2.so
         working-directory: libxml2
         run: |
           set -euxo pipefail
-          NDK_DIR="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}"
-          TOOLBIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          TRIPLE=aarch64-linux-android
-          API=24
-
-          export CC="$TOOLBIN/${TRIPLE}${API}-clang"
-          export CXX="$TOOLBIN/${TRIPLE}${API}-clang++"
-          export AR="$TOOLBIN/llvm-ar"
-          export RANLIB="$TOOLBIN/llvm-ranlib"
-          export STRIP="$TOOLBIN/llvm-strip"
-          unset LD
-
-          export CFLAGS="-fPIC -O2"
-          export LDFLAGS="-fuse-ld=lld -Wl,--as-needed"
-          export PKG_CONFIG_LIBDIR=""
-
-          echo 'int main(void){return 0;}' > sanity.c
-          $CC sanity.c -o sanity
-          rm -f sanity sanity.c
-
-          chmod +x autogen.sh
-          ./autogen.sh
-
-          # Force-cross settings to bypass test execution
-          ./configure \
-            --host="$TRIPLE" \
-            --build=x86_64-linux-gnu \
-            --prefix="$PWD/out-arm64-v8a" \
-            --enable-shared \
-            --disable-static \
-            --without-icu \
-            --without-python \
-            --with-iconv=no \
-            --without-lzma \
-            --with-zlib=yes \
-            --disable-dependency-tracking \
-            ac_cv_prog_cc_cross=yes \
-            ac_cv_exeext=no \
-            ac_cv_func_malloc_0_nonnull=yes \
-            ac_cv_func_realloc_0_nonnull=yes \
-            ac_cv_func_memcmp_working=yes \
-            ac_cv_func_strerror=yes \
-            ac_cv_func_gettimeofday=yes \
-            ac_cv_func_gethostbyname=yes \
-            ac_cv_func_connect=yes \
-            ac_cv_func_getaddrinfo=yes \
-            ac_cv_func_getnameinfo=yes \
-            ac_cv_func_fork_works=yes \
-            ac_cv_func_vfork_works=yes \
-            ac_cv_func_mmap_fixed_mapped=yes \
-            ac_cv_func_mmap_anon=yes \
-            ac_cv_header_stdc=yes \
-            ac_cv_file__dev_zero=yes \
-            ac_cv_c_bigendian=no \
-            ac_cv_prog_cc_g=yes \
-            cross_compiling=yes
-
-          make -j"$(nproc)"
-          make install
-
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
-          if [ -f .libs/libxml2.so ]; then
-            cp .libs/libxml2.so "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so"
-          else
-            cp .libs/libxml2.so.* "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so"
-          fi
+          # find the produced shared lib and copy it as unversioned name
+          sofile="$(find build -name 'libxml2*.so' | head -n 1)"
+          cp "$sofile" "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so"
+          ls -la "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
 
       - name: Upload artifact (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
           name: libxml2-arm64-v8a
           path: jniLibs/arm64-v8a/libxml2.so
-
-      - name: Upload config.log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: config-log-arm64
-          path: libxml2/config.log
