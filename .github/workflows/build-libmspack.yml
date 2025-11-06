@@ -36,7 +36,6 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # Map ABI -> Android target triple
           case "${{ matrix.abi }}" in
             arm64-v8a) TRIPLE=aarch64-linux-android ;;
             x86_64)    TRIPLE=x86_64-linux-android ;;
@@ -47,24 +46,21 @@ jobs:
           TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
-          # Drive clang/clang++ explicitly with target+sysroot.
-          # Let clang invoke the linker; don't override LD.
+          export PATH="$TOOLCHAIN:$PATH"
           export CC="$TOOLCHAIN/clang --target=${TRIPLE}${API} --sysroot=$SYSROOT"
           export CXX="$TOOLCHAIN/clang++ --target=${TRIPLE}${API} --sysroot=$SYSROOT"
           export AR="$TOOLCHAIN/llvm-ar"
           export RANLIB="$TOOLCHAIN/llvm-ranlib"
           export STRIP="$TOOLCHAIN/llvm-strip"
 
-          # Flags: add sysroot + lld for safety
           export CPPFLAGS="--sysroot=$SYSROOT"
           export CFLAGS="-fPIC -O2 --sysroot=$SYSROOT"
           export LDFLAGS="--sysroot=$SYSROOT -fuse-ld=lld -Wl,--as-needed"
 
-          # Generate configure
           chmod +x autogen.sh
           ./autogen.sh
 
-          # Cross-compile; pre-answer checks so configure doesn't try to run test binaries.
+          # Cross-compilation configure call
           ./configure \
             --host="$TRIPLE" \
             --build=x86_64-linux-gnu \
@@ -72,17 +68,23 @@ jobs:
             --enable-shared \
             --disable-static \
             --disable-dependency-tracking \
+            --enable-cross-compile \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
             ac_cv_c_bigendian=no \
             ac_cv_prog_cc_cross=yes \
             ac_cv_prog_cc_works=yes \
-            ac_cv_exeext=no
+            ac_cv_exeext=no \
+            ac_cv_file__dev_zero=yes \
+            ac_cv_func_mmap_fixed_mapped=yes \
+            ac_cv_func_memcmp_working=yes \
+            ac_cv_func_fork_works=yes \
+            ac_cv_func_vfork_works=yes \
+            ac_cv_func_malloc_works=yes
 
-          make -j"$(nproc)"
+          make -j"$(nproc)" || (cat config.log || true; exit 1)
           make install
 
-          # Collect into jniLibs folder
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}"
           if [ -f .libs/libmspack.so ]; then
             cp .libs/libmspack.so "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libmspack.so"
