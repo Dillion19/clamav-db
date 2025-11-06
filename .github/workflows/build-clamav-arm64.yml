@@ -45,6 +45,16 @@ jobs:
           sed -i 's/add_subdirectory(freshclam)/# add_subdirectory(freshclam)/' CMakeLists.txt || true
           sed -i 's/add_subdirectory(clamonacc)/# add_subdirectory(clamonacc)/' CMakeLists.txt || true
 
+- name: Disable libfreshclam and OpenSSL detection
+        working-directory: clamav
+        run: |
+          # disable unnecessary subprojects
+          sed -i 's/add_subdirectory(freshclam)/# add_subdirectory(freshclam)/' CMakeLists.txt || true
+          sed -i 's/add_subdirectory(clamonacc)/# add_subdirectory(clamonacc)/' CMakeLists.txt || true
+          # neutralize OpenSSL requirement early
+          sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
+          sed -i 's/find_package(OpenSSL)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
+
       - name: Configure (CMake, arm64-v8a)
         working-directory: clamav
         run: |
