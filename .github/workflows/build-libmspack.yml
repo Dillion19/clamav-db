@@ -14,12 +14,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build tools (autotools)
+      - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y autoconf automake libtool pkg-config git
 
-      - name: Fetch libmspack (official Git mirror)
+      - name: Fetch libmspack (official git mirror)
         run: |
           git clone --depth 1 https://github.com/kyz/libmspack.git
           ls -la libmspack
@@ -46,7 +46,6 @@ jobs:
           API=24
           TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
-          # Toolchain
           export CC="$TOOLCHAIN/${TRIPLE}${API}-clang"
           export CXX="$TOOLCHAIN/${TRIPLE}${API}-clang++"
           export AR="$TOOLCHAIN/llvm-ar"
@@ -54,14 +53,17 @@ jobs:
           export LD="$TOOLCHAIN/ld.lld"
           export STRIP="$TOOLCHAIN/llvm-strip"
 
-          # Flags
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-Wl,--as-needed"
 
-          # Generate ./configure for the git checkout
-          autoreconf -fi
+          # libmspack repo already includes a pre-generated ./configure script
+          if [ ! -f configure ]; then
+            echo "configure missing — something's wrong with repo"
+            ls -la
+            exit 1
+          fi
 
-          # Configure for Android, build shared .so
+          chmod +x configure
           ./configure --host="$TRIPLE" \
                       --prefix="$PWD/out-${{ matrix.abi }}" \
                       --enable-shared --disable-static
@@ -69,12 +71,10 @@ jobs:
           make -j"$(nproc)"
           make install
 
-          # Collect the .so in a jniLibs-like layout for easy download
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}"
           if [ -f .libs/libmspack.so ]; then
             cp .libs/libmspack.so "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libmspack.so"
           else
-            # Some libtool builds only emit versioned names
             cp .libs/libmspack.so.* "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libmspack.so"
           fi
 
@@ -84,7 +84,6 @@ jobs:
           name: libmspack-${{ matrix.abi }}
           path: jniLibs/${{ matrix.abi }}/libmspack.so
 
-      # Optional: if something fails above, upload logs to help debugging next time
       - name: Upload config.log on failure
         if: failure()
         uses: actions/upload-artifact@v4
