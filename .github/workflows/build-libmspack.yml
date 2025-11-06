@@ -46,23 +46,20 @@ jobs:
           API=24
           TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
-          # Toolchain
           export CC="$TOOLCHAIN/${TRIPLE}${API}-clang"
           export CXX="$TOOLCHAIN/${TRIPLE}${API}-clang++"
           export AR="$TOOLCHAIN/llvm-ar"
           export RANLIB="$TOOLCHAIN/llvm-ranlib"
           export LD="$TOOLCHAIN/ld.lld"
           export STRIP="$TOOLCHAIN/llvm-strip"
-
-          # Flags
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-Wl,--as-needed"
 
-          # Generate configure (project provides autogen.sh)
+          # Generate configure
           chmod +x autogen.sh
           ./autogen.sh
 
-          # Cross-compile: skip runtime tests that can't execute on the host
+          # Tell configure we’re cross-compiling and skip runtime tests
           ./configure \
             --host="$TRIPLE" \
             --build=x86_64-linux-gnu \
@@ -71,12 +68,17 @@ jobs:
             --disable-static \
             --disable-maintainer-mode \
             ac_cv_func_malloc_0_nonnull=yes \
-            ac_cv_func_realloc_0_nonnull=yes
+            ac_cv_func_realloc_0_nonnull=yes \
+            ac_cv_c_bigendian=no \
+            ac_cv_prog_cc_cross=yes \
+            ac_cv_prog_cc_works=yes \
+            ac_cv_exeext=no
 
-          make -j"$(nproc)"
+          # Build library
+          make -j"$(nproc)" || (cat config.log || true; exit 1)
           make install
 
-          # Collect artifact in jniLibs-style path
+          # Collect into jniLibs folder
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}"
           if [ -f .libs/libmspack.so ]; then
             cp .libs/libmspack.so "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libmspack.so"
