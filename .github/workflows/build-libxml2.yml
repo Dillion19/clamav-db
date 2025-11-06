@@ -31,7 +31,6 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # Resolve NDK path from setup-ndk
           NDK_DIR="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}"
           test -d "$NDK_DIR"
           TOOLBIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -39,7 +38,6 @@ jobs:
           TRIPLE=aarch64-linux-android
           API=24
 
-          # Use NDK-provided compiler drivers (embed sysroot/target)
           export CC="$TOOLBIN/${TRIPLE}${API}-clang"
           export CXX="$TOOLBIN/${TRIPLE}${API}-clang++"
           export AR="$TOOLBIN/llvm-ar"
@@ -47,19 +45,18 @@ jobs:
           export STRIP="$TOOLBIN/llvm-strip"
           unset LD
 
-          # Flags & pkg-config isolation
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-fuse-ld=lld -Wl,--as-needed"
           export PKG_CONFIG_LIBDIR=""
 
-          # Sanity compile
           echo 'int main(void){return 0;}' > sanity.c
           $CC sanity.c -o sanity
           rm -f sanity sanity.c
 
-          # Bootstrap & configure WITHOUT ICU/Python/iconv/lzma
           chmod +x autogen.sh
           ./autogen.sh
+
+          # ✅ Fixed cross-compilation flags
           ./configure \
             --host="$TRIPLE" \
             --build=x86_64-linux-gnu \
@@ -71,14 +68,20 @@ jobs:
             --with-iconv=no \
             --without-lzma \
             --with-zlib=yes \
+            ac_cv_func_malloc_0_nonnull=yes \
+            ac_cv_func_realloc_0_nonnull=yes \
+            ac_cv_func_memcmp_working=yes \
+            ac_cv_func_fork_works=yes \
+            ac_cv_func_vfork_works=yes \
             ac_cv_prog_cc_cross=yes \
             ac_cv_exeext=no \
-          || { echo "===== BEGIN config.log ====="; cat config.log || true; echo "===== END config.log ====="; exit 1; }
+            ac_cv_func_gethostbyname=yes \
+            ac_cv_func_connect=yes \
+            ac_cv_func_gettimeofday=yes
 
           make -j"$(nproc)"
           make install
 
-          # Copy to jniLibs-style path with unversioned name
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
           if [ -f .libs/libxml2.so ]; then
             cp .libs/libxml2.so "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libxml2.so"
