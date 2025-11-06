@@ -64,6 +64,13 @@ jobs:
             -D ENABLE_UNRAR=OFF \
             -D ENABLE_STATIC_LIB=OFF \
             -D ENABLE_OPENSSL=OFF \
+            -D ENABLE_SSL=OFF \
+            -D ENABLE_MILTER=OFF \
+            -D ENABLE_SIGS_BZIP2=OFF \
+            -D ENABLE_SIGS_CRYPTO=OFF \
+            -D ENABLE_SIGS_GPG=OFF \
+            -D ENABLE_SIGS_OPENSSL=OFF \
+            -D ENABLE_LIBCHECK=OFF \
             -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
