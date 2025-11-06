@@ -56,14 +56,11 @@ jobs:
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-Wl,--as-needed"
 
-          # Make sure configure script exists
-          if [ ! -f configure ]; then
-            echo "configure missing; list contents:"
-            ls -la
-            exit 1
-          fi
+          # Generate ./configure (run provided autogen.sh)
+          chmod +x autogen.sh
+          ./autogen.sh
 
-          chmod +x configure
+          # Configure & build
           ./configure --host="$TRIPLE" \
                       --prefix="$PWD/out-${{ matrix.abi }}" \
                       --enable-shared --disable-static
