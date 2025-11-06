@@ -17,23 +17,23 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build git pkg-config
+          sudo apt-get install -y cmake ninja-build git pkg-config binutils
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27
 
+      # Stages your existing dependency .so files from the app's repo path.
       - name: Prepare third-party libs
         run: |
           set -euxo pipefail
           mkdir -p thirdparty/arm64-v8a
-          cp -v app/src/main/jniLibs/arm64-v8a/libxml2.so thirdparty/arm64-v8a/ || echo "libxml2.so missing"
-          cp -v app/src/main/jniLibs/arm64-v8a/libmspack.so thirdparty/arm64-v8a/ || echo "libmspack.so missing"
+          cp -v app/src/main/jniLibs/arm64-v8a/libxml2.so thirdparty/arm64-v8a/ || echo "libxml2.so missing (ok)"
+          cp -v app/src/main/jniLibs/arm64-v8a/libmspack.so thirdparty/arm64-v8a/ || echo "libmspack.so missing (ok)"
           if [ -f app/src/main/jniLibs/arm64-v8a/libc++_shared.so ]; then
             cp -v app/src/main/jniLibs/arm64-v8a/libc++_shared.so thirdparty/arm64-v8a/
           fi
-          echo "Staged libs:"
           ls -la thirdparty/arm64-v8a || true
 
       - name: Fetch ClamAV
@@ -42,7 +42,7 @@ jobs:
           cd clamav
           git submodule update --init --recursive
 
-      - name: Configure (CMake, arm64-v8a)
+      - name: Configure (CMake, arm64-v8a) — try without OpenSSL; fallback patches if needed
         working-directory: clamav
         run: |
           set -euxo pipefail
@@ -50,6 +50,8 @@ jobs:
           echo "Using NDK: $NDK_DIR"
           test -d "$NDK_DIR"
 
+          # --- First attempt: disable OpenSSL/crypto cleanly via CMake flags ---
+          set +e
           cmake -S . -B build \
             -G Ninja \
             -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
@@ -57,12 +59,12 @@ jobs:
             -D ANDROID_PLATFORM=24 \
             -D CMAKE_BUILD_TYPE=Release \
             -D BUILD_SHARED_LIBS=ON \
-            -D ENABLE_CLAMONACC=OFF \
             -D ENABLE_APP=OFF \
             -D ENABLE_TESTS=OFF \
             -D ENABLE_EXAMPLES=OFF \
             -D ENABLE_UNRAR=OFF \
             -D ENABLE_STATIC_LIB=OFF \
+            -D ENABLE_CLAMONACC=OFF \
             -D ENABLE_OPENSSL=OFF \
             -D ENABLE_SSL=OFF \
             -D ENABLE_MILTER=OFF \
@@ -71,9 +73,55 @@ jobs:
             -D ENABLE_SIGS_GPG=OFF \
             -D ENABLE_SIGS_OPENSSL=OFF \
             -D ENABLE_LIBCHECK=OFF \
+            -D OPENSSL_FOUND=FALSE \
+            -D OPENSSL_ROOT_DIR=OFF \
+            -D OPENSSL_INCLUDE_DIR=OFF \
+            -D OPENSSL_CRYPTO_LIBRARY=OFF \
+            -D OPENSSL_SSL_LIBRARY=OFF \
+            -D OPENSSL_LIBRARIES=OFF \
             -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
             -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
+          status=$?
+          set -e
+
+          # --- Fallback: patch CMakeLists to remove hard REQUIRE on OpenSSL and reconfigure ---
+          if [ $status -ne 0 ]; then
+            echo "First CMake configure failed; patching CMakeLists.txt to bypass OpenSSL detection…"
+            sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
+            sed -i 's/find_package(OpenSSL QUIET REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
+
+            cmake -S . -B build \
+              -G Ninja \
+              -D CMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
+              -D ANDROID_ABI=arm64-v8a \
+              -D ANDROID_PLATFORM=24 \
+              -D CMAKE_BUILD_TYPE=Release \
+              -D BUILD_SHARED_LIBS=ON \
+              -D ENABLE_APP=OFF \
+              -D ENABLE_TESTS=OFF \
+              -D ENABLE_EXAMPLES=OFF \
+              -D ENABLE_UNRAR=OFF \
+              -D ENABLE_STATIC_LIB=OFF \
+              -D ENABLE_CLAMONACC=OFF \
+              -D ENABLE_OPENSSL=OFF \
+              -D ENABLE_SSL=OFF \
+              -D ENABLE_MILTER=OFF \
+              -D ENABLE_SIGS_BZIP2=OFF \
+              -D ENABLE_SIGS_CRYPTO=OFF \
+              -D ENABLE_SIGS_GPG=OFF \
+              -D ENABLE_SIGS_OPENSSL=OFF \
+              -D ENABLE_LIBCHECK=OFF \
+              -D OPENSSL_FOUND=FALSE \
+              -D OPENSSL_ROOT_DIR=OFF \
+              -D OPENSSL_INCLUDE_DIR=OFF \
+              -D OPENSSL_CRYPTO_LIBRARY=OFF \
+              -D OPENSSL_SSL_LIBRARY=OFF \
+              -D OPENSSL_LIBRARIES=OFF \
+              -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
+              -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
+              -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
+          fi
 
       - name: Build
         working-directory: clamav
@@ -87,6 +135,12 @@ jobs:
           sofile="$(find build -name 'libclamav*.so' | head -n 1)"
           cp "$sofile" "$GITHUB_WORKSPACE/jniLibs/arm64-v8a/libclamav.so"
           ls -la "$GITHUB_WORKSPACE/jniLibs/arm64-v8a"
+
+      # Quick sanity: list DT_NEEDED deps so we know what Android will try to dlopen.
+      - name: Post-build dependency check
+        run: |
+          echo "NEEDED dependencies for libclamav.so:"
+          readelf -d jniLibs/arm64-v8a/libclamav.so | grep NEEDED || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
