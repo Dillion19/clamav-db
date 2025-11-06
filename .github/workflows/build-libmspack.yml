@@ -19,22 +19,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y autoconf automake libtool pkg-config git
 
-      - name: Fetch libmspack (official git mirror)
-        run: |
-          git clone --depth 1 https://github.com/kyz/libmspack.git
-          ls -la libmspack/libmspack
-
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27
 
+      - name: Fetch libmspack (official mirror)
+        run: |
+          git clone --depth 1 https://github.com/kyz/libmspack.git
+          ls -la libmspack/libmspack
+
       - name: Build ${{ matrix.abi }}
         working-directory: libmspack/libmspack
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
           set -euxo pipefail
+
+          # --- Resolve NDK path robustly --------------------------------------
+          NDK_DIR="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}"
+          if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
+            echo "ERROR: ANDROID_NDK_ROOT/HOME not set by setup-ndk."
+            echo "Env dump:"; env | grep ANDROID || true
+            exit 1
+          fi
+          echo "Using NDK at: $NDK_DIR"
+          TOOLBIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -d "$TOOLBIN" || { echo "ERROR: Toolchain bin not found: $TOOLBIN"; ls -la "$NDK_DIR"; exit 1; }
+          # --------------------------------------------------------------------
 
           # Map ABI -> Android target triple
           case "${{ matrix.abi }}" in
@@ -42,43 +52,32 @@ jobs:
             x86_64)    TRIPLE=x86_64-linux-android ;;
             *) echo "Unsupported ABI"; exit 1 ;;
           esac
-
           API=24
-          TOOLBIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
-          # Use NDK's preconfigured compiler drivers (they embed the sysroot/target)
+          # Use the NDK-provided compiler drivers (embed correct sysroot)
           export CC="$TOOLBIN/${TRIPLE}${API}-clang"
           export CXX="$TOOLBIN/${TRIPLE}${API}-clang++"
           export AR="$TOOLBIN/llvm-ar"
           export RANLIB="$TOOLBIN/llvm-ranlib"
           export STRIP="$TOOLBIN/llvm-strip"
-          unset LD  # let clang pick the right linker
+          unset LD # let clang pick linker
 
-          # Flags
-          export CPPFLAGS=""
           export CFLAGS="-fPIC -O2"
           export LDFLAGS="-fuse-ld=lld -Wl,--as-needed"
-
-          # Prevent host pkg-config from poisoning cross build
           export PKG_CONFIG_LIBDIR=""
 
-          # --- Toolchain sanity check (compile a tiny program) -----------------
+          # Sanity: show compiler and do a trivial compile
+          $CC -v || true
           echo 'int main(void){return 0;}' > sanity.c
-          if ! $CC sanity.c -o sanity 2> sanity.err; then
-            echo "Compiler failed on a trivial program."
-            echo "=== \$CC -v ==="; $CC -v || true
-            echo "=== sanity.err ==="; cat sanity.err || true
-            exit 1
-          fi
-          rm -f sanity sanity.c sanity.err
-          # --------------------------------------------------------------------
+          $CC sanity.c -o sanity
+          rm -f sanity sanity.c
 
           # Generate configure
           chmod +x autogen.sh
           ./autogen.sh
 
-          # Configure for cross-compile; pre-answer checks so it won't try to run target binaries
-          if ! ./configure \
+          # Cross-compile: pre-answer checks so configure won't try to run target binaries
+          ./configure \
             --host="$TRIPLE" \
             --build=x86_64-linux-gnu \
             --prefix="$PWD/out-${{ matrix.abi }}" \
@@ -90,18 +89,12 @@ jobs:
             ac_cv_c_bigendian=no \
             ac_cv_exeext=no \
             ac_cv_prog_cc_cross=yes \
-            ac_cv_prog_cc_works=yes
-          then
-            echo "===== BEGIN config.log ====="
-            cat config.log || true
-            echo "=====  END config.log  ====="
-            exit 1
-          fi
+            ac_cv_prog_cc_works=yes \
+          || { echo "===== BEGIN config.log ====="; cat config.log || true; echo "===== END config.log ====="; exit 1; }
 
           make -j"$(nproc)"
           make install
 
-          # Collect into jniLibs folder
           mkdir -p "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}"
           if [ -f .libs/libmspack.so ]; then
             cp .libs/libmspack.so "$GITHUB_WORKSPACE/jniLibs/${{ matrix.abi }}/libmspack.so"
