@@ -67,6 +67,7 @@ jobs:
             -D ENABLE_MILTER=OFF \
             -D ENABLE_PCRE2=OFF \
             -D ENABLE_ICONV=OFF \
+            -D ENABLE_JSONC=OFF \
             -D ENABLE_SIGS_BZIP2=OFF \
             -D ENABLE_SIGS_CRYPTO=OFF \
             -D ENABLE_SIGS_GPG=OFF \
@@ -84,6 +85,11 @@ jobs:
             -D ICONV_LIBRARIES=OFF \
             -D ICONV_INCLUDE_DIR=OFF \
             -D ICONV_INCLUDE_DIRS=OFF \
+            -D JSONC_FOUND=FALSE \
+            -D JSONC_LIBRARY=OFF \
+            -D JSONC_LIBRARIES=OFF \
+            -D JSONC_INCLUDE_DIR=OFF \
+            -D JSONC_INCLUDE_DIRS=OFF \
             -D OPENSSL_FOUND=FALSE \
             -D OPENSSL_INCLUDE_DIR=OFF \
             -D OPENSSL_LIBRARIES=OFF \
@@ -100,6 +106,7 @@ jobs:
             sed -i 's/find_package(OpenSSL REQUIRED)/# find_package(OpenSSL DISABLED)/' CMakeLists.txt || true
             sed -i 's/find_package(PCRE2 REQUIRED)/# find_package(PCRE2 DISABLED)/' CMakeLists.txt || true
             sed -i 's/find_package(Iconv REQUIRED)/# find_package(Iconv DISABLED)/' CMakeLists.txt || true
+            sed -i 's/find_package(JSONC REQUIRED)/# find_package(JSONC DISABLED)/' CMakeLists.txt || true
 
             cmake -S . -B build \
               -G Ninja \
@@ -119,6 +126,7 @@ jobs:
               -D ENABLE_MILTER=OFF \
               -D ENABLE_PCRE2=OFF \
               -D ENABLE_ICONV=OFF \
+              -D ENABLE_JSONC=OFF \
               -D ENABLE_SIGS_BZIP2=OFF \
               -D ENABLE_SIGS_CRYPTO=OFF \
               -D ENABLE_SIGS_GPG=OFF \
@@ -132,6 +140,9 @@ jobs:
               -D ICONV_FOUND=FALSE \
               -D ICONV_LIBRARY=OFF \
               -D ICONV_INCLUDE_DIR=OFF \
+              -D JSONC_FOUND=FALSE \
+              -D JSONC_LIBRARY=OFF \
+              -D JSONC_INCLUDE_DIR=OFF \
               -D CMAKE_C_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_CXX_FLAGS="-fPIC -O2 -DANDROID -D__ANDROID_API__=24" \
               -D CMAKE_SHARED_LINKER_FLAGS="-llog -lz -lm"
